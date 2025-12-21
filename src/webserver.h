@@ -1,5 +1,6 @@
 #pragma once
 #include "database.h"
+#include "logger.h"  // Добавляем логгер
 #include <crow.h>
 #include <string>
 #include <memory>
@@ -11,7 +12,7 @@ private:
     int port;
     
     void setupRoutes();
-    std::string readConfig();
+    void setupLogging();  // Новая функция для настройки логирования
     
 public:
     WebServer(const std::string& config_file);

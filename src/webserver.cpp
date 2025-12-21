@@ -3,10 +3,15 @@
 #include <iostream>
 
 WebServer::WebServer(const std::string& config_file) : port(8080) {
+    // Настраиваем логирование
+    setupLogging();
+    
+    LOG_INFO("Initializing WebServer with config file: " + config_file);
+    
     // Чтение конфигурации
     std::ifstream config_stream(config_file);
     if (!config_stream) {
-        std::cerr << "Cannot open config file: " << config_file << std::endl;
+        LOG_ERROR("Cannot open config file: " + config_file);
         return;
     }
     
@@ -22,31 +27,50 @@ WebServer::WebServer(const std::string& config_file) : port(8080) {
             "user=" + config["database"]["user"].get<std::string>() + " " +
             "password=" + config["database"]["password"].get<std::string>();
         
+        LOG_INFO("Database connection string prepared");
+        
         db = std::make_unique<Database>(conn_str);
         
         if (!db->connect()) {
-            std::cerr << "Failed to connect to database" << std::endl;
+            LOG_ERROR("Failed to connect to database");
             return;
         }
+        
+        LOG_INFO("Database connected successfully");
         
         port = config["server"]["port"].get<int>();
         
         setupRoutes();
         
+        LOG_INFO("WebServer initialized successfully on port " + std::to_string(port));
+        
     } catch (const std::exception& e) {
-        std::cerr << "Config error: " << e.what() << std::endl;
+        LOG_ERROR("Config error: " + std::string(e.what()));
     }
 }
 
+void WebServer::setupLogging() {
+    auto& logger = Logger::getInstance();
+    logger.setLogFile("server.log");
+    logger.setLogToConsole(true);
+    logger.setMinLevel(LogLevel::DEBUG);
+    LOG_INFO("Logging system initialized");
+}
+
 void WebServer::setupRoutes() {
+    LOG_DEBUG("Setting up routes...");
+    
     // Статические файлы - правильный путь
     CROW_ROUTE(app, "/")
     ([]() {
+        LOG_DEBUG("Request to root path");
         std::ifstream file("www/index.html");
         if (!file) {
             // Альтернативный путь
+            LOG_DEBUG("Trying alternative path for index.html");
             file.open("../www/index.html");
             if (!file) {
+                LOG_WARNING("Index file not found");
                 return crow::response(404, "Index file not found");
             }
         }
@@ -63,15 +87,18 @@ void WebServer::setupRoutes() {
     // Статические файлы CSS, JS и т.д.
     CROW_ROUTE(app, "/<string>")
     ([](const std::string& filename) {
+        LOG_DEBUG("Request for static file: " + filename);
         std::string path = "www/" + filename;
         std::ifstream file(path);
         
         if (!file) {
             // Попробуем альтернативный путь
+            LOG_DEBUG("Trying alternative path for: " + filename);
             path = "../www/" + filename;
             file.open(path);
             
             if (!file) {
+                LOG_WARNING("File not found: " + filename);
                 return crow::response(404, "File not found: " + filename);
             }
         }
@@ -101,6 +128,7 @@ void WebServer::setupRoutes() {
     // API: Тест подключения к БД
     CROW_ROUTE(app, "/api/test-db")
     ([this]() {
+        LOG_DEBUG("API request: /api/test-db");
         bool connected = db->testConnection();
         
         json response;
@@ -111,6 +139,13 @@ void WebServer::setupRoutes() {
         res.set_header("Content-Type", "application/json; charset=utf-8");
         res.set_header("Access-Control-Allow-Origin", "*");
         res.body = response.dump();
+        
+        if (connected) {
+            LOG_DEBUG("Database test: connected");
+        } else {
+            LOG_WARNING("Database test: not connected");
+        }
+        
         return res;
     });
     
@@ -118,6 +153,7 @@ void WebServer::setupRoutes() {
     CROW_ROUTE(app, "/api/devices")
     .methods("GET"_method)
     ([this]() {
+        LOG_DEBUG("API request: GET /api/devices");
         auto devices = db->getAllDevices();
         json result = json::array();
         
@@ -135,6 +171,8 @@ void WebServer::setupRoutes() {
         res.set_header("Content-Type", "application/json; charset=utf-8");
         res.set_header("Access-Control-Allow-Origin", "*");
         res.body = result.dump();
+        
+        LOG_DEBUG("Returning " + std::to_string(devices.size()) + " devices");
         return res;
     });
     
@@ -142,6 +180,7 @@ void WebServer::setupRoutes() {
     CROW_ROUTE(app, "/api/devices")
     .methods("POST"_method)
     ([this](const crow::request& req) {
+        LOG_DEBUG("API request: POST /api/devices");
         try {
             auto body = json::parse(req.body);
             Device device;
@@ -149,6 +188,8 @@ void WebServer::setupRoutes() {
             device.model = body["model"].get<std::string>();
             device.purchase_date = body["purchase_date"].get<std::string>();
             device.status = body["status"].get<std::string>();
+            
+            LOG_INFO("Adding new device: " + device.name);
             
             bool success = db->addDevice(device);
             
@@ -159,8 +200,17 @@ void WebServer::setupRoutes() {
             res.set_header("Content-Type", "application/json; charset=utf-8");
             res.set_header("Access-Control-Allow-Origin", "*");
             res.body = response.dump();
+            
+            if (success) {
+                LOG_INFO("Device added successfully: " + device.name);
+            } else {
+                LOG_ERROR("Failed to add device: " + device.name);
+            }
+            
             return res;
         } catch (const std::exception& e) {
+            LOG_ERROR("Error adding device: " + std::string(e.what()));
+            
             json response;
             response["success"] = false;
             response["error"] = e.what();
@@ -177,6 +227,7 @@ void WebServer::setupRoutes() {
     CROW_ROUTE(app, "/api/service-types")
     .methods("GET"_method)
     ([this]() {
+        LOG_DEBUG("API request: GET /api/service-types");
         auto types = db->getAllServiceTypes();
         json result = json::array();
         
@@ -193,6 +244,8 @@ void WebServer::setupRoutes() {
         res.set_header("Content-Type", "application/json; charset=utf-8");
         res.set_header("Access-Control-Allow-Origin", "*");
         res.body = result.dump();
+        
+        LOG_DEBUG("Returning " + std::to_string(types.size()) + " service types");
         return res;
     });
     
@@ -200,12 +253,15 @@ void WebServer::setupRoutes() {
     CROW_ROUTE(app, "/api/service-history")
     .methods("GET"_method)
     ([this]() {
+        LOG_DEBUG("API request: GET /api/service-history");
         auto history = db->getDetailedServiceHistory();
         
         crow::response res;
         res.set_header("Content-Type", "application/json; charset=utf-8");
         res.set_header("Access-Control-Allow-Origin", "*");
         res.body = history.dump();
+        
+        LOG_DEBUG("Returning service history with " + std::to_string(history.size()) + " records");
         return res;
     });
     
@@ -213,6 +269,7 @@ void WebServer::setupRoutes() {
     CROW_ROUTE(app, "/api/service-history")
     .methods("POST"_method)
     ([this](const crow::request& req) {
+        LOG_DEBUG("API request: POST /api/service-history");
         try {
             auto body = json::parse(req.body);
             ServiceRecord record;
@@ -223,6 +280,8 @@ void WebServer::setupRoutes() {
             record.notes = body["notes"].get<std::string>();
             record.next_due_date = body["next_due_date"].get<std::string>();
             
+            LOG_INFO("Adding service record for device ID: " + std::to_string(record.device_id));
+            
             bool success = db->addServiceRecord(record);
             
             json response;
@@ -232,8 +291,17 @@ void WebServer::setupRoutes() {
             res.set_header("Content-Type", "application/json; charset=utf-8");
             res.set_header("Access-Control-Allow-Origin", "*");
             res.body = response.dump();
+            
+            if (success) {
+                LOG_INFO("Service record added successfully");
+            } else {
+                LOG_ERROR("Failed to add service record");
+            }
+            
             return res;
         } catch (const std::exception& e) {
+            LOG_ERROR("Error adding service record: " + std::string(e.what()));
+            
             json response;
             response["success"] = false;
             response["error"] = e.what();
@@ -250,6 +318,7 @@ void WebServer::setupRoutes() {
     CROW_ROUTE(app, "/api/service-records")
     .methods("GET"_method)
     ([this]() {
+        LOG_DEBUG("API request: GET /api/service-records");
         auto records = db->getAllServiceRecords();
         json result = json::array();
         
@@ -269,11 +338,22 @@ void WebServer::setupRoutes() {
         res.set_header("Content-Type", "application/json; charset=utf-8");
         res.set_header("Access-Control-Allow-Origin", "*");
         res.body = result.dump();
+        
+        LOG_DEBUG("Returning " + std::to_string(records.size()) + " service records");
         return res;
     });
+    
+    LOG_INFO("Routes setup completed");
 }
 
 void WebServer::run() {
+    LOG_INFO("Starting server on port " + std::to_string(port));
     std::cout << "Starting server on port " << port << std::endl;
-    app.port(port).multithreaded().run();
+    
+    try {
+        app.port(port).multithreaded().run();
+    } catch (const std::exception& e) {
+        LOG_ERROR("Server runtime error: " + std::string(e.what()));
+        throw;
+    }
 }

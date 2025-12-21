@@ -1,40 +1,54 @@
 #include "database.h"
+#include "logger.h"  // Добавляем логгер
 #include <iostream>
 
 Database::Database(const std::string& conn_str) {
+    LOG_DEBUG("Creating database connection");
     try {
         conn = std::make_unique<pqxx::connection>(conn_str);
         if (conn->is_open()) {
+            LOG_INFO("Connected to database successfully");
             std::cout << "Connected to database successfully" << std::endl;
         } else {
+            LOG_ERROR("Failed to connect to database");
             std::cerr << "Failed to connect to database" << std::endl;
         }
     } catch (const std::exception& e) {
+        LOG_ERROR("Database connection error: " + std::string(e.what()));
         std::cerr << "Database connection error: " << e.what() << std::endl;
     }
 }
 
 Database::~Database() {
+    LOG_DEBUG("Database connection closing");
     // Удаляем вызов conn->close() - соединение закроется автоматически
     // При уничтожении unique_ptr, деструктор pqxx::connection вызовется автоматически
 }
 
 bool Database::connect() {
-    return conn && conn->is_open();
+    bool connected = conn && conn->is_open();
+    if (!connected) {
+        LOG_WARNING("Database connection check failed");
+    }
+    return connected;
 }
 
 bool Database::testConnection() {
+    LOG_DEBUG("Testing database connection");
     try {
         pqxx::work txn(*conn);
         txn.exec("SELECT 1");
+        LOG_DEBUG("Database connection test successful");
         return true;
     } catch (const std::exception& e) {
+        LOG_ERROR("Database connection test failed: " + std::string(e.what()));
         std::cerr << "Test connection failed: " << e.what() << std::endl;
         return false;
     }
 }
 
 std::vector<Device> Database::getAllDevices() {
+    LOG_DEBUG("Getting all devices from database");
     std::vector<Device> devices;
     try {
         pqxx::work txn(*conn);
@@ -52,13 +66,17 @@ std::vector<Device> Database::getAllDevices() {
             devices.push_back(d);
         }
         txn.commit();
+        
+        LOG_DEBUG("Retrieved " + std::to_string(devices.size()) + " devices from database");
     } catch (const std::exception& e) {
+        LOG_ERROR("Error getting devices: " + std::string(e.what()));
         std::cerr << "Error getting devices: " << e.what() << std::endl;
     }
     return devices;
 }
 
 bool Database::addDevice(const Device& device) {
+    LOG_INFO("Adding device to database: " + device.name);
     try {
         pqxx::work txn(*conn);
         txn.exec_params(
@@ -69,8 +87,11 @@ bool Database::addDevice(const Device& device) {
             device.status
         );
         txn.commit();
+        
+        LOG_INFO("Device added successfully: " + device.name);
         return true;
     } catch (const std::exception& e) {
+        LOG_ERROR("Error adding device '" + device.name + "': " + std::string(e.what()));
         std::cerr << "Error adding device: " << e.what() << std::endl;
         return false;
     }
@@ -78,6 +99,7 @@ bool Database::addDevice(const Device& device) {
 
 // Реализация недостающих методов для Device
 bool Database::updateDevice(int id, const Device& device) {
+    LOG_INFO("Updating device ID " + std::to_string(id) + ": " + device.name);
     try {
         pqxx::work txn(*conn);
         txn.exec_params(
@@ -89,26 +111,34 @@ bool Database::updateDevice(int id, const Device& device) {
             id
         );
         txn.commit();
+        
+        LOG_INFO("Device updated successfully: " + device.name);
         return true;
     } catch (const std::exception& e) {
+        LOG_ERROR("Error updating device ID " + std::to_string(id) + ": " + std::string(e.what()));
         std::cerr << "Error updating device: " << e.what() << std::endl;
         return false;
     }
 }
 
 bool Database::deleteDevice(int id) {
+    LOG_WARNING("Deleting device ID " + std::to_string(id));
     try {
         pqxx::work txn(*conn);
         txn.exec_params("DELETE FROM Devices WHERE device_id=$1", id);
         txn.commit();
+        
+        LOG_INFO("Device deleted successfully: ID " + std::to_string(id));
         return true;
     } catch (const std::exception& e) {
+        LOG_ERROR("Error deleting device ID " + std::to_string(id) + ": " + std::string(e.what()));
         std::cerr << "Error deleting device: " << e.what() << std::endl;
         return false;
     }
 }
 
 std::vector<ServiceType> Database::getAllServiceTypes() {
+    LOG_DEBUG("Getting all service types from database");
     std::vector<ServiceType> types;
     try {
         pqxx::work txn(*conn);
@@ -125,7 +155,10 @@ std::vector<ServiceType> Database::getAllServiceTypes() {
             types.push_back(st);
         }
         txn.commit();
+        
+        LOG_DEBUG("Retrieved " + std::to_string(types.size()) + " service types from database");
     } catch (const std::exception& e) {
+        LOG_ERROR("Error getting service types: " + std::string(e.what()));
         std::cerr << "Error getting service types: " << e.what() << std::endl;
     }
     return types;
@@ -133,6 +166,7 @@ std::vector<ServiceType> Database::getAllServiceTypes() {
 
 // Реализация недостающих методов для ServiceType
 bool Database::addServiceType(const ServiceType& type) {
+    LOG_INFO("Adding service type: " + type.name);
     try {
         pqxx::work txn(*conn);
         txn.exec_params(
@@ -142,14 +176,18 @@ bool Database::addServiceType(const ServiceType& type) {
             type.standard_cost
         );
         txn.commit();
+        
+        LOG_INFO("Service type added successfully: " + type.name);
         return true;
     } catch (const std::exception& e) {
+        LOG_ERROR("Error adding service type '" + type.name + "': " + std::string(e.what()));
         std::cerr << "Error adding service type: " << e.what() << std::endl;
         return false;
     }
 }
 
 bool Database::updateServiceType(int id, const ServiceType& type) {
+    LOG_INFO("Updating service type ID " + std::to_string(id) + ": " + type.name);
     try {
         pqxx::work txn(*conn);
         txn.exec_params(
@@ -160,26 +198,34 @@ bool Database::updateServiceType(int id, const ServiceType& type) {
             id
         );
         txn.commit();
+        
+        LOG_INFO("Service type updated successfully: " + type.name);
         return true;
     } catch (const std::exception& e) {
+        LOG_ERROR("Error updating service type ID " + std::to_string(id) + ": " + std::string(e.what()));
         std::cerr << "Error updating service type: " << e.what() << std::endl;
         return false;
     }
 }
 
 bool Database::deleteServiceType(int id) {
+    LOG_WARNING("Deleting service type ID " + std::to_string(id));
     try {
         pqxx::work txn(*conn);
         txn.exec_params("DELETE FROM Service_Types WHERE service_id=$1", id);
         txn.commit();
+        
+        LOG_INFO("Service type deleted successfully: ID " + std::to_string(id));
         return true;
     } catch (const std::exception& e) {
+        LOG_ERROR("Error deleting service type ID " + std::to_string(id) + ": " + std::string(e.what()));
         std::cerr << "Error deleting service type: " << e.what() << std::endl;
         return false;
     }
 }
 
 std::vector<ServiceRecord> Database::getAllServiceRecords() {
+    LOG_DEBUG("Getting all service records from database");
     std::vector<ServiceRecord> records;
     try {
         pqxx::work txn(*conn);
@@ -200,13 +246,17 @@ std::vector<ServiceRecord> Database::getAllServiceRecords() {
             records.push_back(sr);
         }
         txn.commit();
+        
+        LOG_DEBUG("Retrieved " + std::to_string(records.size()) + " service records from database");
     } catch (const std::exception& e) {
+        LOG_ERROR("Error getting service records: " + std::string(e.what()));
         std::cerr << "Error getting service records: " << e.what() << std::endl;
     }
     return records;
 }
 
 bool Database::addServiceRecord(const ServiceRecord& record) {
+    LOG_INFO("Adding service record for device ID " + std::to_string(record.device_id));
     try {
         pqxx::work txn(*conn);
         txn.exec_params(
@@ -220,8 +270,11 @@ bool Database::addServiceRecord(const ServiceRecord& record) {
             record.next_due_date.empty() ? nullptr : record.next_due_date.c_str()
         );
         txn.commit();
+        
+        LOG_INFO("Service record added successfully for device ID " + std::to_string(record.device_id));
         return true;
     } catch (const std::exception& e) {
+        LOG_ERROR("Error adding service record: " + std::string(e.what()));
         std::cerr << "Error adding service record: " << e.what() << std::endl;
         return false;
     }
@@ -229,6 +282,7 @@ bool Database::addServiceRecord(const ServiceRecord& record) {
 
 // Реализация недостающих методов для ServiceRecord
 bool Database::updateServiceRecord(int id, const ServiceRecord& record) {
+    LOG_INFO("Updating service record ID " + std::to_string(id));
     try {
         pqxx::work txn(*conn);
         txn.exec_params(
@@ -242,26 +296,34 @@ bool Database::updateServiceRecord(int id, const ServiceRecord& record) {
             id
         );
         txn.commit();
+        
+        LOG_INFO("Service record updated successfully: ID " + std::to_string(id));
         return true;
     } catch (const std::exception& e) {
+        LOG_ERROR("Error updating service record ID " + std::to_string(id) + ": " + std::string(e.what()));
         std::cerr << "Error updating service record: " << e.what() << std::endl;
         return false;
     }
 }
 
 bool Database::deleteServiceRecord(int id) {
+    LOG_WARNING("Deleting service record ID " + std::to_string(id));
     try {
         pqxx::work txn(*conn);
         txn.exec_params("DELETE FROM Service_History WHERE record_id=$1", id);
         txn.commit();
+        
+        LOG_INFO("Service record deleted successfully: ID " + std::to_string(id));
         return true;
     } catch (const std::exception& e) {
+        LOG_ERROR("Error deleting service record ID " + std::to_string(id) + ": " + std::string(e.what()));
         std::cerr << "Error deleting service record: " << e.what() << std::endl;
         return false;
     }
 }
 
 json Database::getDetailedServiceHistory() {
+    LOG_DEBUG("Getting detailed service history with JOIN");
     json result = json::array();
     try {
         pqxx::work txn(*conn);
@@ -294,7 +356,10 @@ json Database::getDetailedServiceHistory() {
             result.push_back(record);
         }
         txn.commit();
+        
+        LOG_DEBUG("Retrieved detailed service history with " + std::to_string(result.size()) + " records");
     } catch (const std::exception& e) {
+        LOG_ERROR("Error getting detailed history: " + std::string(e.what()));
         std::cerr << "Error getting detailed history: " << e.what() << std::endl;
     }
     return result;
