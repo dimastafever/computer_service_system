@@ -33,6 +33,7 @@ find_package(Threads REQUIRED)
 find_path(CROW_INCLUDE_DIR crow.h
     PATHS
     ${CMAKE_SOURCE_DIR}/Crow/include
+    ${CMAKE_SOURCE_DIR}/../Crow/include
     /usr/include
     /usr/local/include
     /usr/include/crow
