@@ -26,7 +26,17 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential cmake libboost-all-dev libpqxx-dev clang-format
+        sudo apt-get install -y build-essential cmake libboost-all-dev libpqxx-dev libgtest-dev googletest clang-format
+    
+    - name: Build GTest (if needed)
+      if: steps.check_gtest.outputs.exists != 'true'
+      run: |
+        # In case libgtest-dev doesn't provide compiled libraries
+        sudo apt-get install -y cmake libgtest-dev
+        cd /usr/src/googletest
+        sudo cmake .
+        sudo make
+        sudo cp *.a /usr/lib/ || true
     
     - name: Setup Crow framework
       run: |
