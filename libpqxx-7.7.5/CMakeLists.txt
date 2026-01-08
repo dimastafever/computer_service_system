@@ -24,7 +24,16 @@ endif()
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
-include(config)
+
+# Skip feature detection tests on systems where they may fail (e.g., Alpine/musl)
+# The try_compile tests in config.cmake can fail due to C++ library compatibility
+if(NOT SKIP_BUILD_TEST)
+    include(config)
+else()
+    message(STATUS "Skipping feature detection tests (SKIP_BUILD_TEST=ON)")
+    # Create pre-configured headers for Alpine/musl systems
+    include(config-alpine)
+endif()
 
 add_subdirectory(src)
 add_subdirectory(include)

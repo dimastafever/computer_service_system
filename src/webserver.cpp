@@ -1,12 +1,15 @@
 #include "webserver.h"
+#include "metrics.h"
 #include <fstream>
 #include <iostream>
 #include <chrono>
 
 WebServer::WebServer(const std::string& config_file) : port(8080) {
-    // Инициализация логгера
-    Logger::getInstance().init("logs/webserver.log", LogLevel::DEBUG);
-    Logger::getInstance().info("WebServer constructor started", "webserver.cpp");
+    // Инициализация логгера с поддержкой Loki
+    Logger::getInstance().initWithLoki("logs/webserver.log", LogLevel::DEBUG, "localhost", 3100);
+    Logger::getInstance().setServiceName("service_system");
+    Logger::getInstance().logLifecycle("startup", "WebServer constructor started");
+    Logger::getInstance().info("WebServer constructor started with Loki integration", "webserver.cpp");
     
     // Чтение конфигурации
     std::ifstream config_stream(config_file);
@@ -35,13 +38,20 @@ WebServer::WebServer(const std::string& config_file) : port(8080) {
         
         if (!db->connect()) {
             Logger::getInstance().error("Failed to connect to database", "webserver.cpp");
+            Logger::getInstance().logDatabase("connect", false, "Connection failed");
             return;
         }
         
         Logger::getInstance().info("Connected to database successfully", "webserver.cpp");
+        Logger::getInstance().logDatabase("connect", true, "Database connection established");
         
         port = config["server"]["port"].get<int>();
         Logger::getInstance().info("Server configured for port: " + std::to_string(port), "webserver.cpp");
+        
+        // Initialize Prometheus metrics so they can be scraped from startup
+        auto& metrics = MetricsRegistry::getInstance();
+        metrics.initialize();
+        Logger::getInstance().info("Prometheus metrics initialized", "webserver.cpp");
         
         setupRoutes();
         Logger::getInstance().info("Routes configured successfully", "webserver.cpp");
@@ -52,6 +62,18 @@ WebServer::WebServer(const std::string& config_file) : port(8080) {
 }
 
 void WebServer::setupRoutes() {
+    // Prometheus metrics endpoint - must be defined BEFORE catch-all route
+    CROW_ROUTE(app, "/metrics")
+    ([]() {
+        auto& metrics = MetricsRegistry::getInstance();
+        std::string output = metrics.format();
+        
+        crow::response res;
+        res.set_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+        res.body = output;
+        return res;
+    });
+    
     // Статические файлы - правильный путь
     CROW_ROUTE(app, "/")
     ([]() {
@@ -114,13 +136,22 @@ void WebServer::setupRoutes() {
     // API: Тест подключения к БД
     CROW_ROUTE(app, "/api/test-db")
     ([this]() {
+        auto start_time = std::chrono::high_resolution_clock::now();
         bool connected = db->testConnection();
         
         json response;
         response["database_connected"] = connected;
         response["timestamp"] = std::time(nullptr);
         
-        crow::response res;
+        auto end_time = std::chrono::high_resolution_clock::now();
+        long duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+        
+        // Record Prometheus metrics
+        auto& metrics = MetricsRegistry::getInstance();
+        metrics.recordHttpRequest("GET", "/api/test-db", 200, duration_ms / 1000.0);
+        metrics.recordDbOperation("test_connection", connected);
+        
+        crow::response res(200);
         res.set_header("Content-Type", "application/json; charset=utf-8");
         res.set_header("Access-Control-Allow-Origin", "*");
         res.body = response.dump();
@@ -172,6 +203,11 @@ void WebServer::setupRoutes() {
             Logger::getInstance().logRequest(client_ip, "POST", "/api/login", 
                                               auth_success ? 200 : 401, duration_ms);
             
+            // Record Prometheus metrics
+            auto& metrics = MetricsRegistry::getInstance();
+            metrics.recordAuthAttempt(username, auth_success);
+            metrics.recordHttpRequest("POST", "/api/login", auth_success ? 200 : 401, duration_ms / 1000.0);
+            
             crow::response res(auth_success ? 200 : 401);
             res.set_header("Content-Type", "application/json; charset=utf-8");
             res.set_header("Access-Control-Allow-Origin", "*");
@@ -184,6 +220,10 @@ void WebServer::setupRoutes() {
             
             Logger::getInstance().logRequest(client_ip, "POST", "/api/login", 400, duration_ms);
             Logger::getInstance().error(std::string("Login error: ") + e.what(), "webserver.cpp");
+            
+            // Record Prometheus metrics for error
+            MetricsRegistry::getInstance().recordAuthAttempt("unknown", false);
+            MetricsRegistry::getInstance().recordHttpRequest("POST", "/api/login", 400, duration_ms / 1000.0);
             
             json response;
             response["success"] = false;
@@ -201,17 +241,24 @@ void WebServer::setupRoutes() {
     CROW_ROUTE(app, "/api/logout")
     .methods("POST"_method)
     ([this](const crow::request& req) {
+        auto start_time = std::chrono::high_resolution_clock::now();
         std::string client_ip = req.remote_ip_address.empty() ? "unknown" : req.remote_ip_address;
         
         // Логируем выход пользователя
         Logger::getInstance().info("User logout successful", "webserver.cpp");
+        
+        // Record Prometheus metrics
+        auto& metrics = MetricsRegistry::getInstance();
+        metrics.recordHttpRequest("POST", "/api/logout", 200, 0.001);
+        metrics.recordDbOperation("logout", true);
+        
         Logger::getInstance().logRequest(client_ip, "POST", "/api/logout", 200, 1);
         
         json response;
         response["success"] = true;
         response["message"] = "Logged out successfully";
         
-        crow::response res;
+        crow::response res(200);
         res.set_header("Content-Type", "application/json; charset=utf-8");
         res.set_header("Access-Control-Allow-Origin", "*");
         res.body = response.dump();
@@ -222,6 +269,7 @@ void WebServer::setupRoutes() {
     CROW_ROUTE(app, "/api/devices")
     .methods("GET"_method)
     ([this]() {
+        auto start_time = std::chrono::high_resolution_clock::now();
         auto devices = db->getAllDevices();
         json result = json::array();
         
@@ -235,52 +283,56 @@ void WebServer::setupRoutes() {
             result.push_back(j);
         }
         
-        crow::response res;
+        auto end_time = std::chrono::high_resolution_clock::now();
+        long duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+        
+        // Record Prometheus metrics
+        auto& metrics = MetricsRegistry::getInstance();
+        metrics.recordHttpRequest("GET", "/api/devices", 200, duration_ms / 1000.0);
+        metrics.recordDbOperation("get_devices", true);
+        
+        crow::response res(200);
         res.set_header("Content-Type", "application/json; charset=utf-8");
         res.set_header("Access-Control-Allow-Origin", "*");
         res.body = result.dump();
         return res;
     });
     
-    // API: Добавление нового устройства
+    // API: Добавление нового устройства (ЗАБЛОКИРОВАНО)
     CROW_ROUTE(app, "/api/devices")
     .methods("POST"_method)
     ([this](const crow::request& req) {
-        try {
-            auto body = json::parse(req.body);
-            Device device;
-            device.name = body["name"].get<std::string>();
-            device.model = body["model"].get<std::string>();
-            device.purchase_date = body["purchase_date"].get<std::string>();
-            device.status = body["status"].get<std::string>();
-            
-            bool success = db->addDevice(device);
-            
-            json response;
-            response["success"] = success;
-            
-            crow::response res;
-            res.set_header("Content-Type", "application/json; charset=utf-8");
-            res.set_header("Access-Control-Allow-Origin", "*");
-            res.body = response.dump();
-            return res;
-        } catch (const std::exception& e) {
-            json response;
-            response["success"] = false;
-            response["error"] = e.what();
-            
-            crow::response res(400);
-            res.set_header("Content-Type", "application/json; charset=utf-8");
-            res.set_header("Access-Control-Allow-Origin", "*");
-            res.body = response.dump();
-            return res;
-        }
+        auto start_time = std::chrono::high_resolution_clock::now();
+        std::string client_ip = req.remote_ip_address.empty() ? "unknown" : req.remote_ip_address;
+        
+        // Логируем попытку добавления устройства (заблокировано)
+        Logger::getInstance().warning("Blocked device creation attempt from IP: " + client_ip, "webserver.cpp");
+        Logger::getInstance().logDevice(-1, "create_blocked", false);
+        
+        // Record metrics
+        auto& metrics = MetricsRegistry::getInstance();
+        metrics.recordDeviceOperation("create_blocked", -1, false);
+        metrics.recordHttpRequest("POST", "/api/devices", 403, 0.001);
+        
+        json response;
+        response["success"] = false;
+        response["error"] = "Adding new devices is disabled";
+        
+        auto end_time = std::chrono::high_resolution_clock::now();
+        long duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+        
+        crow::response res(403);
+        res.set_header("Content-Type", "application/json; charset=utf-8");
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.body = response.dump();
+        return res;
     });
     
     // API: Получение всех типов услуг
     CROW_ROUTE(app, "/api/service-types")
     .methods("GET"_method)
     ([this]() {
+        auto start_time = std::chrono::high_resolution_clock::now();
         auto types = db->getAllServiceTypes();
         json result = json::array();
         
@@ -293,7 +345,15 @@ void WebServer::setupRoutes() {
             result.push_back(j);
         }
         
-        crow::response res;
+        auto end_time = std::chrono::high_resolution_clock::now();
+        long duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+        
+        // Record Prometheus metrics
+        auto& metrics = MetricsRegistry::getInstance();
+        metrics.recordHttpRequest("GET", "/api/service-types", 200, duration_ms / 1000.0);
+        metrics.recordDbOperation("get_service_types", true);
+        
+        crow::response res(200);
         res.set_header("Content-Type", "application/json; charset=utf-8");
         res.set_header("Access-Control-Allow-Origin", "*");
         res.body = result.dump();
@@ -304,9 +364,18 @@ void WebServer::setupRoutes() {
     CROW_ROUTE(app, "/api/service-history")
     .methods("GET"_method)
     ([this]() {
+        auto start_time = std::chrono::high_resolution_clock::now();
         auto history = db->getDetailedServiceHistory();
         
-        crow::response res;
+        auto end_time = std::chrono::high_resolution_clock::now();
+        long duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+        
+        // Record Prometheus metrics
+        auto& metrics = MetricsRegistry::getInstance();
+        metrics.recordHttpRequest("GET", "/api/service-history", 200, duration_ms / 1000.0);
+        metrics.recordDbOperation("get_service_history", true);
+        
+        crow::response res(200);
         res.set_header("Content-Type", "application/json; charset=utf-8");
         res.set_header("Access-Control-Allow-Origin", "*");
         res.body = history.dump();
@@ -317,6 +386,10 @@ void WebServer::setupRoutes() {
     CROW_ROUTE(app, "/api/service-history")
     .methods("POST"_method)
     ([this](const crow::request& req) {
+        auto start_time = std::chrono::high_resolution_clock::now();
+        int record_id = -1;
+        bool success = false;
+        
         try {
             auto body = json::parse(req.body);
             ServiceRecord record;
@@ -327,10 +400,20 @@ void WebServer::setupRoutes() {
             record.notes = body["notes"].get<std::string>();
             record.next_due_date = body["next_due_date"].get<std::string>();
             
-            bool success = db->addServiceRecord(record);
+            success = db->addServiceRecord(record);
+            record_id = success ? 1 : -1;
+            
+            // Record metrics
+            auto& metrics = MetricsRegistry::getInstance();
+            metrics.recordServiceOperation("create", record_id, success);
+            metrics.recordDbOperation("add_service_record", success);
             
             json response;
             response["success"] = success;
+            
+            auto end_time = std::chrono::high_resolution_clock::now();
+            long duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+            metrics.recordHttpRequest("POST", "/api/service-history", success ? 200 : 400, duration_ms / 1000.0);
             
             crow::response res;
             res.set_header("Content-Type", "application/json; charset=utf-8");
@@ -338,6 +421,15 @@ void WebServer::setupRoutes() {
             res.body = response.dump();
             return res;
         } catch (const std::exception& e) {
+            auto end_time = std::chrono::high_resolution_clock::now();
+            long duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+            
+            // Record metrics for error
+            auto& metrics = MetricsRegistry::getInstance();
+            metrics.recordServiceOperation("create", -1, false);
+            metrics.recordDbOperation("add_service_record", false);
+            metrics.recordHttpRequest("POST", "/api/service-history", 400, duration_ms / 1000.0);
+            
             json response;
             response["success"] = false;
             response["error"] = e.what();
@@ -354,6 +446,7 @@ void WebServer::setupRoutes() {
     CROW_ROUTE(app, "/api/service-records")
     .methods("GET"_method)
     ([this]() {
+        auto start_time = std::chrono::high_resolution_clock::now();
         auto records = db->getAllServiceRecords();
         json result = json::array();
         
@@ -369,7 +462,15 @@ void WebServer::setupRoutes() {
             result.push_back(j);
         }
         
-        crow::response res;
+        auto end_time = std::chrono::high_resolution_clock::now();
+        long duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+        
+        // Record Prometheus metrics
+        auto& metrics = MetricsRegistry::getInstance();
+        metrics.recordHttpRequest("GET", "/api/service-records", 200, duration_ms / 1000.0);
+        metrics.recordDbOperation("get_service_records", true);
+        
+        crow::response res(200);
         res.set_header("Content-Type", "application/json; charset=utf-8");
         res.set_header("Access-Control-Allow-Origin", "*");
         res.body = result.dump();
@@ -379,5 +480,11 @@ void WebServer::setupRoutes() {
 
 void WebServer::run() {
     std::cout << "Starting server on port " << port << std::endl;
+    
+    // Ensure metrics are initialized before starting the server
+    auto& metrics = MetricsRegistry::getInstance();
+    metrics.initialize();
+    
+    // Start the server - Crow binds to 0.0.0.0 by default
     app.port(port).multithreaded().run();
 }

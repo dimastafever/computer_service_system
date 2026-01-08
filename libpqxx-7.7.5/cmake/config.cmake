@@ -82,6 +82,14 @@ try_compile(
 	PQXX_HAVE_MULTIDIMENSIONAL_SUBSCRIPT
 	${PROJECT_BINARY_DIR}
 	SOURCES ${PROJECT_SOURCE_DIR}/config-tests/multidim-subscript.cxx)
+
+# C++20 does not support multidimensional subscripts (P2128R6 was rejected)
+# Even though the try_compile test passes, the actual use of operator[] with
+# multiple arguments fails in C++20. Disable this feature when using C++20+.
+if(PQXX_HAVE_MULTIDIMENSIONAL_SUBSCRIPT AND CMAKE_CXX_STANDARD GREATER_EQUAL 20)
+  message(STATUS "Disabling multidimensional subscript support for C++20+")
+  set(PQXX_HAVE_MULTIDIMENSIONAL_SUBSCRIPT FALSE)
+endif()
 try_compile(
 	PQXX_HAVE_CHARCONV_FLOAT
 	${PROJECT_BINARY_DIR}

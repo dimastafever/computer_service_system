@@ -1,3 +1,6 @@
+#ifndef PQXX_INTERNAL_CONVERSIONS_HXX
+#define PQXX_INTERNAL_CONVERSIONS_HXX
+
 #include <array>
 #include <cstring>
 #include <map>
@@ -969,12 +972,10 @@ namespace pqxx::internal
 /// String traits for SQL arrays.
 template<typename Container> struct array_string_traits
 {
-private:
+public:
   using elt_type = strip_t<value_type<Container>>;
   using elt_traits = string_traits<elt_type>;
   static constexpr zview s_null{"NULL"};
-
-public:
   static zview to_buf(char *begin, char *end, Container const &value)
   {
     return generic_to_buf(begin, end, value);
@@ -1186,3 +1187,5 @@ template<typename T> inline void into_string(T const &value, std::string &out)
   out.resize(static_cast<std::size_t>(end - data - 1));
 }
 } // namespace pqxx
+
+#endif // PQXX_INTERNAL_CONVERSIONS_HXX

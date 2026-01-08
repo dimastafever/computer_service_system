@@ -21,6 +21,8 @@
 
 #include "pqxx/result.hxx"
 #include "pqxx/strconv.hxx"
+#include "pqxx/util.hxx"
+#include "pqxx/internal/conversions.hxx"
 
 namespace pqxx
 {

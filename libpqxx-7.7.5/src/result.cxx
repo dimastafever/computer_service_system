@@ -141,15 +141,6 @@ pqxx::row pqxx::result::operator[](result_size_type i) const noexcept
 }
 
 
-#if defined(PQXX_HAVE_MULTIDIMENSIONAL_SUBSCRIPT)
-pqxx::field pqxx::result::operator[](
-  result_size_type row_num, row_size_type col_num) const noexcept
-{
-  return {*this, row_num, field_num};
-}
-#endif
-
-
 pqxx::row pqxx::result::at(pqxx::result::size_type i) const
 {
   if (i >= size())
