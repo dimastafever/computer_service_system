@@ -94,9 +94,9 @@ ENV APP_PORT=8080
 ENV LOKI_HOST=loki
 ENV DB_HOST=db
 
-# Healthcheck
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:${APP_PORT}/metrics || exit 1
+# Healthcheck - используем 127.0.0.1 вместо localhost для избежания проблем с IPv6 в BusyBox wget
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:${APP_PORT}/metrics || exit 1
 
 # Запуск приложения
 CMD ["/app/wait-for-db.sh", "/app/service_system", "/app/config.json"]
