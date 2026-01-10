@@ -117,6 +117,7 @@ services:
     volumes:
       - ./docker/promtail-local-config.yaml:/etc/promtail/promtail-config.yaml:ro
       - app_logs:/app/logs:ro
+      - promtail_data:/var/lib/promtail
     depends_on:
       - loki
     networks:
@@ -164,6 +165,8 @@ volumes:
   grafana_data:
     driver: local
   app_logs:
+    driver: local
+  promtail_data:
     driver: local
 
 # ============================================
