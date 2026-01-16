@@ -10,7 +10,7 @@ env:
   # Docker Hub Registry
   REGISTRY: docker.io
   # Image name for DockerHub: dmitriier/dev_ops_pr
-  IMAGE_NAME: dmitriier/dev_ops_pr
+  IMAGE_NAME: dmitriier/service-system
 
 jobs:
   build-and-push:
